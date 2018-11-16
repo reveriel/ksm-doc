@@ -1,8 +1,6 @@
-== Page table
-:source-highlighter: highlightjs
+### Page table
 
-link:https://www.kernel.org/doc/gorman/html/understand/understand006.html[Page Table
-Management]
+[Page Table Management](https://www.kernel.org/doc/gorman/html/understand/understand006.html)
 
 Each process has a pointer `mm_struct->pgd` points to its own __Page Global
 Directory(PGD)__ which is a physical page frame. The frame contains an array
@@ -51,23 +49,23 @@ The macro `pte_page()` returns the `struct page` which corresponds to the PTE en
 
 
 Code in x86:
-[source,c]
-----
-#define pte_page(pte)	pfn_to_page(pte_pfn(pte))
-----
 
-----
+``` c
+#define pte_page(pte)	pfn_to_page(pte_pfn(pte))
+```
+
+``` c
 static inline unsigned long pte_pfn(pte_t pte)
 {
 	return (pte_val(pte) & PTE_PFN_MASK) >> PAGE_SHIFT;
 }
-----
+```
 
 seciton ?
 
 `struct mem_section`, is, logically, a pointer to an array of struct pages.
 
-----
+``` c
 #define pfn_to_page __pfn_to_page
 #define __pfn_to_page(pfn)                              \
 ({      unsigned long __pfn = (pfn);                    \
@@ -89,7 +87,7 @@ static inline struct page *__section_mem_map_addr(struct mem_section *section)
 	map &= SECTION_MAP_MASK;
 	return (struct page *)map;
 }
-----
+```
 
 QUESTION: `pte_dirty()` and `PageDirty()`, diff?
 

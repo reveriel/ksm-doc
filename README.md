@@ -1,15 +1,9 @@
-= KSM
-:toc: left
-:source-highlighter: highlightjs
-:sectnums:
+### KSM
 
 KSM(Kernel Samepage Merging). Try to improve it. Based on
-link:code.google.com/archive/p/pksm[PKSM]. Kernel v3.18-rc7
+[PKSM](code.google.com/archive/p/pksm). Kernel v3.18-rc7
 
-
-toc::[]
-
-== Possible plans
+## Possible plans
 
 * delay
 * hash adjustable.
@@ -18,15 +12,15 @@ toc::[]
 * same virtual address
 * page cache
 
-== Background
+## Background
 
-=== BG: KSM
+### BG: KSM
 
 KSM, corresponding file `mm/ksm.c`, merges pages with same
 contents. KSM is enabled by setting `CONFIG_KSM=y`. It can saves a lot
 of memory in Virutal Machine Hypervisors.
 
-You can mark a pieces of memory as ``Mergeable'' using syscall
+You can mark a pieces of memory as "Mergeable" using syscall
 `madvice`, then there is a kthread `[ksmd]` that scan all anonymous
 pages in the Mergeable memory area. When found two pages equal, `ksmd`
 sets two pages sharing one physical page by using COW(Copy on Write)
@@ -62,7 +56,7 @@ won’t change, so the stable tree is always in order.
 
 See `mm/ksm.c:cmp_and_merge_page()`
 
-....
+```
 When `ksmd` inspect an anonymous page,
 First search it in the stable tree.
 if found:
@@ -76,18 +70,20 @@ else, no found:
      maybe you can find someone equal to you
      if found an equal page here
         you both move to the stable tree.
-....
+```
 
 Basically, that’s all.
 
-=== BG, PKSM
+### BG, PKSM
 
-PKSM (file link:mm/pksm.c[`mm/pksm.c`]) made some changes to the
+PKSM (file `mm/pksm.c`) made some changes to the
 original KSM.
 
-It has three queues as worklists. - new anon page list, or new list. -
-every new anon page is added to this list. - rescan anon page list, or
-rescan list. - pages that failed to merge, or removed from unstable tree
+It has three queues as worklists.
+- new anon page list, or new list.
+  every new anon page is added to this list. 
+- rescan anon page list, or rescan list.  -
+  pages that failed to merge, or removed from unstable tree
 - delete anon page list, or del list.
 
 Every anonymous pages born into the world(system) are put in the new
@@ -112,7 +108,7 @@ values are the same.
 
 I think that’s all of PKSM. Quite short, isn’t it.
 
-== Possible Plans
+## Possible Plans
 
 - delay
 - hash adjustable.
@@ -121,7 +117,7 @@ I think that’s all of PKSM. Quite short, isn’t it.
 - same virtual address
 - page cache
 
-=== Plan: Delay
+### Plan: Delay
 
 "Every new page is added to the new list." Is there any problem?
 
@@ -140,15 +136,14 @@ But! This also slows the merging, make it less responsive.
 
 Here is the trade-off. We slows down the merging:
 
-Pro:: less COW break, less CPU usage.
-Con:: less responsive, can not merge short lived pages, less memory saving.
+* Pro:: less COW break, less CPU usage.
+* Con:: less responsive, can not merge short lived pages, less memory saving.
 
 NOTE: Maybe we could measure it and find the optimal solution? See
-<<accounting,,Accounting>>
 
-==== Design
+#### Design
 
-----
+```
                    "the new list"
  new page add to ---> [ [cnt] [cnt] [cnt]  ... [cnt] ]
                           1     0     5    ...   4
@@ -156,7 +151,7 @@ NOTE: Maybe we could measure it and find the optimal solution? See
        if the `cnt` is greater than N, move to candidate list. 
                          |   "the candidae list"
                          +---> [ []  [] ... []]
-----
+```
 
 Scan the new list: do
 
@@ -176,15 +171,12 @@ parameter --- How long does a page stay in the new list.
 Time = ListLength / ScanFreqency * N
 
 
-
-
-[[accounting]]
-===== Accounting
+##### Accounting
 
 Slow the merge speed.
 
-Pro:: less COW break, less CPU usage.
-Con:: less responsive, can not merge short lived pages, less memory saving.
+* Pro:: less COW break, less CPU usage.
+* Con:: less responsive, can not merge short lived pages, less memory saving.
 
 
 
