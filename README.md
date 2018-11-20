@@ -5,12 +5,12 @@ KSM(Kernel Samepage Merging). Try to improve it. Based on
 
 ## Possible plans
 
-* delay
-* hash adjustable.
-* test uksm
-* hash table instead of rbtree
-* same virtual address
-* page cache
+* delay, 延迟去重..
+* hash adjustable. 尝试调整部分哈希的强度. 来自 UKSM
+* hash table instead of rbtree. 将红黑树改为哈希表.
+* test UKSM, 移植 UKSM.
+* same virtual address, 合并相同虚拟地址的页面.
+* page cache, Page Cache 中是否有去重的潜力.
 
 ## Background
 
@@ -74,6 +74,8 @@ else, no found:
 
 Basically, that’s all.
 
+## Plans
+
 ### BG, PKSM
 
 PKSM (file `mm/pksm.c`) made some changes to the
@@ -86,15 +88,15 @@ It has three queues as worklists.
   pages that failed to merge, or removed from unstable tree
 - delete anon page list, or del list.
 
-Every anonymous pages born into the world(system) are put in the new
+Every anonymous pages born into the system are put in the new
 list. Those who failed during merge were added to the rescan list.
-ksmd(or pksmd) also scans the unstable tree and picks up those who’s
+ksmd(or pksmd) also scans the unstable tree and picks pages whose
 content has changed, adds them to the rescan list.
 
-The candidate to be to put to the test of `cmp_and_merge_page()` are
+The candidate pages to be to put to the test of `cmp_and_merge_page()` are
 half from new list, half from rescan list.
 
-The del list is just for the convenience of release the data structure
+The del list is just for convenience of the release of data structure
 for each anonymous page. Every processes in the system may allocate new
 anonymous pages and release them. When releasing, the corresponding data
 structure is simply marked and leave the actual deallocation to ksmd.
@@ -108,16 +110,8 @@ values are the same.
 
 I think that’s all of PKSM. Quite short, isn’t it.
 
-## Possible Plans
 
-- delay
-- hash adjustable.
-- test uksm
-- hash table instead of rbtree
-- same virtual address
-- page cache
-
-### Plan: Delay
+### Delay
 
 "Every new page is added to the new list." Is there any problem?
 
@@ -149,35 +143,26 @@ NOTE: Maybe we could measure it and find the optimal solution? See
  new page add to ---> [ [cnt] [cnt] [cnt]  ... [cnt] ]
                           1     0     5    ...   4
        ksmd scan it, inc the `cnt`
-       if the `cnt` is greater than N, move to candidate list.
-                         |   "the candidae list"
-                         +---> [ []  [] ... []]
+       if the `cnt` is greater than N, try to merge
 ```
 Scan the new list: do
 
-1. Inc counter, if counter > N, move to candidate.
+1. Inc counter, if counter > N, try to merge
 2. If marked DEL, move to del list.
-
-While a pages stays in the new list, it may be freed, changed. If freed,
-it's marked DEL. If it has changed?
-
+3. While a pages stays in the new list, it may be freed, changed.
+   If freed, it's marked DEL.
 If it has changed, see PG_referenced, PG_active, PG_lru.
 如果页面发生了变化, 看 PG_reference 和 PG_active. 还有 PTE 的 Accessed, Dirty bits.
 什么关系?
 
-页面可能有四种情况.
+<!--
+页面可能有四种情况. 展示
 * active, referenced
 * active, unreferenced
 * inactive, referenced
 * inactive, unreferenced
-
-检查 PG_dirty 和 pte_dirty, 如果其中有一个set, cnt 清零.
-
 但是这只体现了 页面被 "读或者写" 的情况, 真正需要知道的是页面内容是否改变.
 可能页面被改变了.
-
-在 `mark_page_accesed()` 里面提醒一下 ksm ?
-
 
 另外如果选择不常使用的页面.
 不常使用的页面, 更容易成为 swap 换出的对象.
@@ -185,23 +170,43 @@ If it has changed, see PG_referenced, PG_active, PG_lru.
 
 合并页面, 将第一个非 ksm 页面设为写保护时, 会调用 `mark_page_accessed`.
 相当于访问了一次该页面.
+-->
+
+检查 PG_dirty 和 pte_dirty, 如果其中有一个set, cnt 清零.
+
+<!--
+在 `mark_page_accesed()` 里面提醒一下 ksm ?
+-->
 
 QUESTION: KsmPage 会被 swap out 吗?
 
 内存去重显然是应该优先于 swap 的, swap 涉及I/O. 而根据 论文 ..,
 内存去重也优于内存压缩.
 
-Two parameters here: the scan freqency, and the N. These can be seen as one
-parameter --- How long does a page stay in the new list.
+#### 算法参数
 
-Time = ListLength / ScanFreqency * N
+页面在被去重之前的等待时间 Time:
 
-pages_to_scan 的调整:
-根据现有内存
+Time = ListLength / ScanSpeed * N
 
+ScanSpeed = pages_to_scan / sleep_milliseconds
 
+其中 ListLength 是 new list 的长度. ScanSpeed 是 ksmd 扫描速度m,
+等于 每次被唤醒时 扫描页面个数 除以 相邻两次唤醒的间隔时间.
+N 是页面在 new list 被扫描几次后才去重.
 
-##### Accounting
+pages_to_scan, sleep_milliseconds, N 是需要确定的参数.
+可以看做是一个参数, (N * sleep_milliseconds / pages_to_scan)
+决定 Time 的大小.
+
+ListLength 是当时 new list 的长度. 在程序启动时可能会突然增加.
+如果 ScanSpeed 与 ListLength 正相关, 可能导致与应用程序竞争 CPU, 
+而且程序启动时刚分配的页面可能立即需要使用. 所有 ScanSpeed 应该与
+ListLength 无关或者负相关.
+
+暂时随便指定.
+
+#### Accounting
 
 Slow the merge speed.
 
@@ -212,8 +217,6 @@ COW break 可以量化, 合并页面也可以量化, 缺少目标函数, 怎么�
 维度上? 时间?
 
 COW break 时间惩罚还行, merge 页面的时间奖励怎么算?
-
-
 
 
 
