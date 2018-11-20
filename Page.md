@@ -98,8 +98,7 @@ QUESTION: `pte_dirty()` and `PageDirty()`, diff?
 PTE 里面也有 dirty bit, PageInfo 里面也有 `PG_dirty`, 两者的关系?
 
 不考虑这两个 bit, 单纯从计算机的状态来讲, 可能两者不一致吗?
-如果 PTE 表示映射到的物理页的 dirty, 逻辑页的 dirty? 都是物理页的, 
-逻辑页面可能没有 PTE.
+如果 PTE 表示映射到的物理页的 dirty, 逻辑页的 dirty?
 
 如果是 x86 的话, pte 的 dirty bit 是 CPU/MMU 维护的, PageInfo 是内核代码维护的.
 参考 [i386 的手册](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s05_02.htm),
@@ -113,10 +112,87 @@ PTE 里面也有 dirty bit, PageInfo 里面也有 `PG_dirty`, 两者的关系?
 > 处理器将第二级页表(即PTE, 386 有两级页表, 一个里面是 PDE, 一个里面是 PTE)中的脏位设置为1。 
 > PDE 中的脏位未定义。
 
-> 支持分页虚拟内存的操作系统可以使用这些位来确定当内存需求超过可用物理内存时要从物理内存中消除的页面。
+> 支持分页虚拟内存的操作系统可以使用这些位来确定当内存需求
+> 超过可用物理内存时要从物理内存中消除的页面。
 > 操作系统负责测试和清除这些位。
 
-也就是说内核要保证 PageInfo 的信息是和 PTE 的信息同步的.
+> 也就是说内核要保证 PageInfo 的信息是和 PTE 的信息同步的.
+
+pte 里面的 access 又叫做 young.
+
+``` c
+static inline int pte_young(pte_t pte)
+{
+        return pte_flags(pte) & _PAGE_ACCESSED;
+}
+```
+
+
+
+### page replacement
+
+pte 有 dirty 和 access(young) bits.
+Page 有 dirty bit, 还有 referenced/active bits.
+
+### page frame reclaiming algorithm(PFRA)
+
+PFRA 把页面分成:
+
+* **unreclaimable**, 包括 伙伴系统里的 Free pages. Reserved Pages(PG_reserved set),
+  kernel 动态分配的页面, 进程在内核模式的栈页面, 临时 Locked 页面(PG_locked),
+  在被锁内存区域的页面 (vma 的 VM_LOCKED set).
+* **swappable**,包括 用户空间的匿名页, tmpfs 映射的页面.
+* **syncable**, 包括用户空间的 mapped pages, pages cache, block device buffer pages,,
+  pages of some disk caches.
+* **discardable**, Unsed pages included in memory caches(e.g., slab allocator caches) ,
+  Unused pages of dentry cache.
+
+syncable 页面回收时需要检查 dirty bit.
+
+回收优先考虑
+
+reverse mapping.
+
+每个内存区域描述符标出一个指向内存描述符的指针, 内存毛师傅包含指向 PGD 的指针
+所以
+
+`_mapcount` 保存指向这个页面的 PTE 个数, 从 -1 开始计数.
+
+`mapping` 如果是 NULL, 页面术语 swap cache. 如果非NULL且最低位为1, 则是匿名页,
+`mapping` 指向 `anon_vma`. 
+
+引用了同一个 page frame 的 anonymous memory regions (`anon_vma`)连成一环形链表.
+pageInfo 里面保存一个链表, 指向所有 map 到这个 page frame 的 pte, 这样的做法
+效率低.改成 pageInfo 指向(保存) 一个链表, 链表里是所有 map 到这个 page frame
+的 vma. 
+
+(在 umap 时会检测 accessed bit, 如果正在使用, 则clear bit, 返回失败)
+
+LRU lists.
+
+PG_referenced, 使page 在 inactive list 和 active list 之间状态转化需要的
+两次连续触发.
+
+向 active list 的触发函数为 `mark_page_accesed()`. 在页面被用户进程, 文件系统层,
+或设备驱动访问时调用. 调用时, 如果 PG_referenced bit 为 0, 置 1. 如果为1, 把页面
+移动到 active list, 置 referenced bit 为 0.
+
+另一个方向, 包含两个函数 `page_referenced()`, `refill_inactive_zone()`.
+PFRA 扫描时对所有页面调用 `page_referenced()`, 
+如果 PG_referecned is set, clears it, 然后使用
+反向映射清除 所有指向这个 page frame 的 PTE 的 Accessed bit.
+把页面从 active 移到 inactive 由 `refill_inactive_zone()`完成.
+
+`refill_inactive_zone()` 由 `shrink_zone()`调用, `shrink_zone()` ...,
+有两个参数, zone, 和 scan_control.
+
+把页面从 active 移到 inactive 意味着这个页面之后可能被回收掉, 所以需要小心.
+
+
+
+
+
+
 
 
 

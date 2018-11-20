@@ -81,7 +81,7 @@ original KSM.
 
 It has three queues as worklists.
 - new anon page list, or new list.
-  every new anon page is added to this list. 
+  every new anon page is added to this list.
 - rescan anon page list, or rescan list.  -
   pages that failed to merge, or removed from unstable tree
 - delete anon page list, or del list.
@@ -141,6 +141,7 @@ Here is the trade-off. We slows down the merging:
 
 NOTE: Maybe we could measure it and find the optimal solution? See
 
+
 #### Design
 
 ```
@@ -148,27 +149,56 @@ NOTE: Maybe we could measure it and find the optimal solution? See
  new page add to ---> [ [cnt] [cnt] [cnt]  ... [cnt] ]
                           1     0     5    ...   4
        ksmd scan it, inc the `cnt`
-       if the `cnt` is greater than N, move to candidate list. 
+       if the `cnt` is greater than N, move to candidate list.
                          |   "the candidae list"
                          +---> [ []  [] ... []]
 ```
-
 Scan the new list: do
 
 1. Inc counter, if counter > N, move to candidate.
-2. If marked DEL, move to del list. 
+2. If marked DEL, move to del list.
 
 While a pages stays in the new list, it may be freed, changed. If freed,
-it's marked DEL. If it has changed? 
+it's marked DEL. If it has changed?
 
-If it has changed?
+If it has changed, see PG_referenced, PG_active, PG_lru.
+如果页面发生了变化, 看 PG_reference 和 PG_active. 还有 PTE 的 Accessed, Dirty bits.
+什么关系?
 
-TODO: If it has changed?
+页面可能有四种情况.
+* active, referenced
+* active, unreferenced
+* inactive, referenced
+* inactive, unreferenced
+
+检查 PG_dirty 和 pte_dirty, 如果其中有一个set, cnt 清零.
+
+但是这只体现了 页面被 "读或者写" 的情况, 真正需要知道的是页面内容是否改变.
+可能页面被改变了.
+
+在 `mark_page_accesed()` 里面提醒一下 ksm ?
+
+
+另外如果选择不常使用的页面.
+不常使用的页面, 更容易成为 swap 换出的对象.
+如果把它合并了, 对 swap 有什么影响?
+
+合并页面, 将第一个非 ksm 页面设为写保护时, 会调用 `mark_page_accessed`.
+相当于访问了一次该页面.
+
+QUESTION: KsmPage 会被 swap out 吗?
+
+内存去重显然是应该优先于 swap 的, swap 涉及I/O. 而根据 论文 ..,
+内存去重也优于内存压缩.
 
 Two parameters here: the scan freqency, and the N. These can be seen as one
 parameter --- How long does a page stay in the new list.
 
 Time = ListLength / ScanFreqency * N
+
+pages_to_scan 的调整:
+根据现有内存
+
 
 
 ##### Accounting
@@ -177,6 +207,14 @@ Slow the merge speed.
 
 * Pro:: less COW break, less CPU usage.
 * Con:: less responsive, can not merge short lived pages, less memory saving.
+
+COW break 可以量化, 合并页面也可以量化, 缺少目标函数, 怎么将它们合并到一个
+维度上? 时间?
+
+COW break 时间惩罚还行, merge 页面的时间奖励怎么算?
+
+
+
 
 
 
