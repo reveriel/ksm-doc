@@ -1,4 +1,4 @@
-### KSM
+# KSM
 
 KSM(Kernel Samepage Merging). Try to improve it. Based on
 [PKSM](code.google.com/archive/p/pksm). Kernel v3.18-rc7
@@ -204,14 +204,14 @@ ListLength 是当时 new list 的长度. 在程序启动时可能会突然增加
 而且程序启动时刚分配的页面可能立即需要使用. 所有 ScanSpeed 应该与
 ListLength 无关或者负相关.
 
-暂时随便指定.
+暂时随便指定. N = 3,
 
 #### Accounting
 
 Slow the merge speed.
 
-* Pro:: less COW break, less CPU usage.
-* Con:: less responsive, can not merge short lived pages, less memory saving.
+* Pros: less COW break, less CPU usage.
+* Cons: less responsive, can not merge short lived pages, less memory saving.
 
 COW break 可以量化, 合并页面也可以量化, 缺少目标函数, 怎么将它们合并到一个
 维度上? 时间?
