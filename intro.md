@@ -1,22 +1,11 @@
-# 背景介绍
-
-内存去重是指⾃动将内存中重复的数据去重, 最常使⽤的⽅法被称为基于内容的页⾯共享 
-(Content Based Page Sharing, CBPS), 扫描内存页⾯, 将内容相同的页⾯合并, 共享同⼀物理页,
-达到节省内存的⽬的. 在虚拟机的 hypervisor 上, 因为多个虚拟机有 很多重复的数据,
-内存去重能达到很好效果, 据 (diff engine 引⽤的), 在运⾏相同虚拟机负载时,
-节省内存量最⾼可达 90%. 节省的内存可以允许 hypervisor 启动更多的虚拟机, 提升系统吞吐量,
-节省硬件成本.
-
-移动设备上, 系统的负载不再是虚拟机, ⽽是各种不同的应⽤. 相⽐虚拟机场景下,
-内存的重复会少⼀些. 例如在 hypervisor 上, 可能多个虚拟机读取同⼀个的⽂件, 每个
-虚拟机的操作系统都会分配⾃⼰的 page cache, hypervisor 可以利⽤内存去重合并这些 page cache,
-也有的⼯作 () 提出利⽤ IO hint 来帮助去重. 在移动设备上只有⼀个操作
-系统, 读取同⼀⽂件只会分配⼀份 page cache.\cite{}. 所以针对移动设备需要有新的⽅法.
-
-
+# Intro
 
 KSM(Kernel Samepage Merging). 是对内存Try to improve it. Based on
 [PKSM](code.google.com/archive/p/pksm). Kernel v3.18-rc7
+
+
+
+
 
 ## Possible plans
 

@@ -18,7 +18,7 @@ main.pdf: $(TEX_GEN) $(CPY_TEX_SRC)
 # generated tex files
 $(O)/%.tex: %.md
 	@mkdir -p $O
-	pandoc -i $^ -o $@
+	pandoc $^ -o $@
 
 # copy tex files
 $(O)/%.tex: %.tex
