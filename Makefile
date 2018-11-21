@@ -27,10 +27,13 @@ $(O)/%.tex: %.tex
 
 main.pdf: $(TEX_GEN) $(CPY_TEX_SRC)
 	cd $(O) ; latexmk -xelatex main
+	ln $(O)/main.pdf .
+	
 
 clean:
 	cd $(O); latexmk -c
 
 cleanall:
 	rm -rf $O
+	rm -rf main.pdf
 
