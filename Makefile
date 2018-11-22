@@ -12,8 +12,10 @@ TEX_GEN = $(addprefix $(O)/, $(patsubst %.md,%.tex, $(MD_SRC)))
 TEX_SRC = $(wildcard *.tex)
 # copy to the output directory.
 CPY_TEX_SRC = $(addprefix $(O)/, $(TEX_SRC))
+# copy bib
+CPY_BIB = $(O)/local-os.bib
 
-main.pdf: $(TEX_GEN) $(CPY_TEX_SRC)
+main.pdf: $(TEX_GEN) $(CPY_TEX_SRC) $(CPY_BIB)
 
 # generated tex files
 $(O)/%.tex: %.md
@@ -22,6 +24,11 @@ $(O)/%.tex: %.md
 
 # copy tex files
 $(O)/%.tex: %.tex
+	@mkdir -p $O
+	cp $^ $@
+
+# copy bib
+$O/%.bib: %.bib
 	@mkdir -p $O
 	cp $^ $@
 
