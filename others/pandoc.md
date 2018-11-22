@@ -32,6 +32,17 @@ LaTeX 最让人讨厌的就是本人的可读性差, 需要编译. 自称将内�
 `pandoc` 生成的 `.tex` 会用到一些宏包, 所以我加上 `--standalone` 参数后, 
 将生成的 `.tex` 文件的 preamber 复制出来放在 `preamber.tex` 中了.
 
+NOTE:
+
+生成的preamber 里面有一句
+
+``` latex
+\setcounter{secnumdepth}{0}
+```
+
+这个会导致章节没有编号, 而且 `\ref{}` 引用也没有数字.
+
+
 ## marktex
 
 这样的做法就叫 Marktex 吧. 参见 [Makefile](../Makefile).
@@ -40,6 +51,8 @@ LaTeX 最让人讨厌的就是本人的可读性差, 需要编译. 自称将内�
 到 `latex/` 目录下, 把手写的 `.tex` 也复制过去. 在 `latex/` 目录下编译.
 
 目前 Makefile 还比较简单, 今后如果增加了子目录再改进吧.
+
+
 
 
 
