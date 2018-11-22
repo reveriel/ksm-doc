@@ -1,8 +1,4 @@
 
-latex/
 *.html
 *.DS_Store
-main.pdf
-
-pandoc-skeleton
 
