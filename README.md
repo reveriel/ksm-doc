@@ -236,4 +236,4 @@ COW break 时间惩罚还行, merge 页面的时间奖励怎么算?
 
 ## Others
 
-[如何使用 git send-email](./sendemail.md)
+[如何使用 email 收发 patch](./email.md)

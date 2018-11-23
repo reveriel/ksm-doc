@@ -1,4 +1,38 @@
 
+
+outlook, 经验: 发邮件如果用 outlook, 会对 `=`
+转义处理的样子, 把你的 patch 弄坏. 建议使用 gmail 发 patch.
+
+```
+Incoming IMAP mail server
+imap-mail.outlook.com
+Incoming IMAP mail server port: 993; Encryption: SSL
+
+Outgoing SMTP mail server
+smtp-mail.outlook.com
+Outgoing SMTP mail server port: 587; Encryption: SSL (TLS)
+```
+
+gmail
+
+```
+Gmail SMTP server address: smtp.gmail.com
+Gmail SMTP username: Your Gmail address (e.g. example@gmail.com)
+Gmail SMTP password: Your Gmail password
+Gmail SMTP port (TLS): 587
+Gmail SMTP port (SSL): 465
+Gmail SMTP TLS/SSL required: yes
+
+
+接收邮件 (IMAP) 服务器	
+imap.gmail.com
+要求 SSL：是
+端口：993
+```
+
+
+
+
 下文原文[How to Use git
 send-email](https://www.freedesktop.org/wiki/Software/PulseAudio/HowToUseGitSendEmail/)
 是 [pulseAudio](https://www.freedesktop.org/wiki/Software/PulseAudio/)
