@@ -86,6 +86,8 @@ If it has changed, see PG_referenced, PG_active, PG_lru.
 如果页面发生了变化, 看 PG_reference 和 PG_active. 还有 PTE 的 Accessed, Dirty bits.
 什么关系?
 
+~~检查 PG_dirty 和 pte_dirty, 如果其中有一个set, cnt 清零. XX~~
+
 这个是物理页, 有多个 pte 对应的, 可以看 PageDirty(), 但是不一定准确, 因为 swapd 会
 把这个 bit 定时清掉. 然后会变成  PG_referenced 和 PG_active.
 
@@ -108,7 +110,6 @@ If it has changed, see PG_referenced, PG_active, PG_lru.
 相当于访问了一次该页面.
 -->
 
-检查 PG_dirty 和 pte_dirty, 如果其中有一个set, cnt 清零.
 
 <!--
 在 `mark_page_accesed()` 里面提醒一下 ksm ?
@@ -141,6 +142,8 @@ ListLength 是当时 new list 的长度. 在程序启动时可能会突然增加
 ListLength 无关或者负相关.
 
 暂时随便指定. N = 3,
+
+
 
 #### Accounting
 

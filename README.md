@@ -24,7 +24,9 @@ KSM(Kernel Samepage Merging). Try to improve it. Based on
 
 [delay](delay.md)
 
-### 
+### adaptive partial hash
+
+[aph](aph.md)
 
 ## Others
 
