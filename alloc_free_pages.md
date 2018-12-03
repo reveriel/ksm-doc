@@ -1,25 +1,27 @@
-## PKSM
+# alloc and free pages
+
+## alloc and page fault
 
 where does those pages come form ?
 
 ``` c
-int pksm_add_new_anon_page(struct page *page, struct rmap_item, 
+int pksm_add_new_anon_page(struct page *page, struct rmap_item,
         struct anon_vma* );
 ```
 
 this is called in only one place `mm/memory.c`
 
 ``` c
-static int do_annoymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
+static int do_anoymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
                 unsigned long address, pte_t *page_table, pmd_t *pmd,
                 unsigned int flags)
 {
-    
+
 }
 ```
 
-`do_annoymous_page()` is called only in `handle_pte_fault()`. 
-when the pte entry is not present, pte.pte == 0, 
+`do_anoymous_page()` is called only in `handle_pte_fault()`.
+when the pte entry is not present, pte.pte == 0,
 
 `handle_pte_fault()` is called only in `__handle_mm_fault()`
 
@@ -27,19 +29,19 @@ when the pte entry is not present, pte.pte == 0,
 handle_mm_fault()
 -> __handle_mm_fault()
   --> handle_pte_fault()
-    --> do_annoymous_page()
+    --> do_anoymous_page()
       --> pksm_add_new_anon_page()
 ```
 
-似乎在 `mm/gup.c` 里面有调用 `handle_mm_fault()`, 
- `mm/gup.c` was move out from `mm/memory.c` file, 
+似乎在 `mm/gup.c` 里面有调用 `handle_mm_fault()`,
+ `mm/gup.c` was move out from `mm/memory.c` file,
 and is about `get_user_pages()`.
 
 还有 `arch/x86/mm/fault.c`  调用 `handle_mm_fault()`
 
 `arch/x86/mm/fault.c`
 ``` c
-/* this routine handles page faults, It determines the address, 
+/* this routine handles page faults, It determines the address,
  * and the problem, and then passes it off to one th of appropriate
  * routines.
  */
@@ -66,13 +68,13 @@ static int handle_pte_fault(mm, vma, address, pte, pmd, flags)
 {
     entry = ACCESS_ONCE(*pte);
     if (!pte_present(entry)) {// page 不在内存里
-        if (pte_none(entry)) { // pte = 0, 
+        if (pte_none(entry)) { // pte = 0,
             if (vma->vm_ops) {
                 if (likely(vma->vm_ops_fault)) // 基于文件的映射. vma 里面有相应的处理
                     return do_linear_fault(mm, vma, address, pte, pmd, flags, entry);
             }
             // 分配匿名页
-            return do_annoymous_page(mm, vma, address, pte, pmd, flags);
+            return do_anoymous_page(mm, vma, address, pte, pmd, flags);
         }
         // 非线性文件映射, 而且被换出了
         if (pte_file(entry))
@@ -100,6 +102,10 @@ static int handle_pte_fault(mm, vma, address, pte, pmd, flags)
     // unlock
     return 0;
 }
+```
+
+
+``` c
 // COW 好像有两种, 一种是文件映射的, 在 do_linear_fault 和 do_nonlieanr fault.
 // 文件的最后都调用的是 __do_fault() --> vma->vm_ops->fault(),
 static int do_nonlinear_fault(mm, vma, address, page_table, pmd, flags, orig_pte) {
@@ -116,14 +122,105 @@ static int do_linear_fault(mm, vma, address, page_table, pmd, flags, orig_pte) {
     pte_unmap(page_table);
     if (!flag & FAULT_FLAG_WRITE)
         return do_read_fault(mm, vma, address, pmd, pgoff, flags, orig_pte);
-    if (!(vma->vm_flags & VM_SHARED))
+    if (!(vma->vm_flags & VM_SHARED)) // 并不是共享的, 你却在写它.
         return do_cow_fault(mm, vma, address, pmd, pgoff, flags, orig_pte);
     return do_shared_fault(mm, vma, address, pmd, pgoff, flags, orig_pte);
 }
 
-
+static int do_cow_fault(mm, vma, address, pmd, pgoff, flags, orig_pte) {
+    anon_vma_prepare(vma); // rmap
+    new_page_alloc_pages_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+    ret = __do_fault(vma, address, pgoff, flags, &fault_page);
+    copy_user_highpage(new_page, fault_page, address, vma);
+    // 这里分配了一个匿名页, 复制过来.
+    do_set_pte(vma, address, new_page, pte, (writable)true, (anon)true);
+}
+// 估计 __do_fault 那里读文件时, page cache 有特殊的处理吧.
 ```
 
+``` c
+static int do_anonymous_page(mm, vma, address, page_table, pmd, flags) {
+    pte_unmap(page_table)
+    if (!(flags & FAULT_FLAG_WRITE)) {
+        entry = pte_mkspecial(pfn_pte(my_zero_pfn(address), vma->vm_page_prot));
+        page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+        goto setpte;
+    }
+    anon_vma_prepare(vma); // rmap
+    page = alloc_zeroed_user_highpage_movable(vma, address);
+    entry = mkpte(page, vma->vm_page_prot);
+    if (vma->vm_flags & WM_WRITE)
+        entry = pte_mkwrite(pte_mkdirty(entry));
+
+    rmap = pksm_alloc_rmap_item();
+
+    page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+    page_add_new_anon_rmap(page, vma, address);
+setpte:
+    set_pte_at(mm, address, page_table, entry);
+
+    if (rmap)
+        pksm_add_new_anon_page(page, rmap, vma->anon_vma);
+}
+```
+
+
+``` c
+// handles present pages, when useres try to write to a shared page.
+// It is done by copy the page to a new address and dec the shared-page counter
+// for the old page
+static int do_wp_page(mm, vma, address, page_table, pmd, ptl, orig_pte) {
+    old_page = vm_normal_page(vma, address, orig_pte);
+    // take out anonymous
+    if (PageAnon(old_page) && !PageKsm(old_page)) {
+
+        // we can write to an anon page without COW if there are no other
+        // references to it. as a side-effect, free up its swap:
+        // because the old content on disk will never be read,
+        // and seeking back there to write new content later would only
+        // waste time away from clustering.
+        // see swap.md
+        if (reuse_swap_page(old_page)) // we {
+            page_move_anon_rmap(old_page, vma, address);
+            goto reuse;
+        }
+
+    } else if (unlikely((vma->vm_flags & (VM_WRITE|VM_SHARED)) == (VM_WRITE|VM_SHARED)))
+    {
+
+    }
+    dirty_page = old_page;
+    get_page(dirty_page);
+reuse:
+    // resue
+gotten:
+    // copy
+    if (is_zero_pfn(pte_pfn(orig_pte))) {
+        new_page = alloc_zeroed_user_highpage_movable(vma, address);
+    } else {
+        new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
+        cow_user_page(new_page, old_page, address, vma);
+    }
+    // recheck the pte - we dropped the lock
+    if (likely(pte_same(*page_table, orig_pte))) {
+        if ()
+
+        // why do it HERE! TODO
+        if (old_page) {
+            pksm_unmap_sharing_pgae(old_page, mm, address);
+            page_remove_rmap(old_page);
+        }
+        // free the old page.
+    } else
+}
+
+static inline void cow_user_page(dst, src, va, vma) {
+    if (unlikely(!src)) {
+     ...
+    } else
+        copy_user_highpage(dst, src, va, vma);
+}
+```
 
 暂时认为, 每个新分配的匿名页都会加入 new list.
 
@@ -135,7 +232,7 @@ alloc_page(gfp_mask, order) {
 }
 alloc_pages_vma();
 #else
-#define alloc_pages(gfp_mask, order)\
+#define alloc_pages(gfp_mask, order) \
             alloc_pages_node(numa_node_id(), gfp_mask, order)
 #define alloc_page_vma(gfp_mask, order, vma, addr, node) \
             alloc_pages(gfp_mask, order)
@@ -217,16 +314,13 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 }
 ```
 
-
-
-
-
-## 释放
+## 释放 free
 
 `pksm_del_anon_page()` called only in `mm/page_alloc.c`, `mm/page_alloc.c`
 manges the free list, the system allocates free pages here.
 
 `mm/page_alloc.c`:
+
 ``` c
 // 这个只是释放 0-order pages 的?
 void free_hot_cold_page(struct page *page, bool cold)
@@ -241,7 +335,7 @@ void free_hot_cold_page(struct page *page, bool cold)
 free_hot_cold_page_list(list, cold)
 --> free_hot_cold_page(page, cold)
 
-void __free_page(struct page *page, unsigned int order)
+void __free_pages(struct page *page, unsigned int order)
 {
     if (put_page_testzero(page)) {
         if (order == 0)
@@ -253,20 +347,74 @@ void __free_page(struct page *page, unsigned int order)
 
 static void __free_pages_ok(struct page *page, unsigned int order)
 {
+    // ...
     free_one_page(page_zone(page), page, pfn, order, migratetype);
 }
 
 static void free_one_page(zone, page, pfn, order, migratetype)
 {
-    __free_one_page(page, pfn, order, migratetype);
+    // ...
+   __free_one_page(page, pfn, order, migratetype);
 }
 
 // free page to buddy system.
 static inline void __free_one_page(page, pfn, order, migratetype)
 {
-    
+    // 到这里就差不多了
 }
 ```
+
+`mm/page_alloc.c`
+暴露三个函数 `free_hot_cold_page()` `free_hot_cold_page_list()` `__free_pages()`,
+头文件为 `gfp.h` :
+
+``` c
+extern void __free_pages(page, order);
+extern void free_pages(addr, order);
+extern void free_hot_cold_page(page, cold);
+extern void free_hot_cold_page_list(list, cold);
+#define __free_page(page) __free_pages((page), 0)
+#define free_page(addr) free_pages((addr), 0)
+```
+还有 `free_kmem_pages(page, order)`, 下面也是调用的 `__free_pages()`
+
+总之, 单个页面释放则调用 `free_hot_cold_page()`, 连续页面释放则调用 `free_one_page()`.
+单个页面释放时, 需要做一些额外的检测, 因为每个cpu有几个 per cpu page list. 要看能不能
+回收到这些list 里面, 如果不行, 再调用 `free_one_page()`.
+
+
+## 在往上呢
+
+alloc_page 和 free_page 在到处都有使用了.
+
+## get and put
+
+还有一对 get 和 put.
+
+
+
+
+``` c
+static inline void get_page(struct page *page)
+{
+    if (unlikely(PageTail(page)))
+        if (likely(__get_page_tail(page)))
+            return;
+    // getting a normal page or the head of a compound page
+    // requires to already have an elevated page->_count
+    VM_BUG_ON_PAGE(atomic_read(&page->_count) <= 0, page);
+    // 引用计数.
+    atomic_inc(&page->_count);
+}
+```
+
+``` c
+struct page {
+
+}
+```
+
+
 
 
 
