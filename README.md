@@ -149,11 +149,19 @@ Scan the new list: do
 
 1. Inc counter, if counter > N, try to merge
 2. If marked DEL, move to del list.
-3. While a pages stays in the new list, it may be freed, changed.
-   If freed, it's marked DEL.
-If it has changed, see PG_referenced, PG_active, PG_lru.
+3. if changed. set cnt to 0
+
+第三条: 检查 PG_dirty 和 pte_dirty, 如果其中有一个set, cnt 清零.
+
+PG_dirty 说的是物理页面有没有被写, 这个 dirty 位还会被 swap 算法清除的.
+所以这个只是个估计, 并不准确.
+
+
+<!--
+根据 If freed,  marked DEL. If it has changed, see PG_referenced, PG_active, PG_lru.
 如果页面发生了变化, 看 PG_reference 和 PG_active. 还有 PTE 的 Accessed, Dirty bits.
 什么关系?
+-->
 
 <!--
 页面可能有四种情况. 展示
@@ -171,8 +179,6 @@ If it has changed, see PG_referenced, PG_active, PG_lru.
 合并页面, 将第一个非 ksm 页面设为写保护时, 会调用 `mark_page_accessed`.
 相当于访问了一次该页面.
 -->
-
-检查 PG_dirty 和 pte_dirty, 如果其中有一个set, cnt 清零.
 
 <!--
 在 `mark_page_accesed()` 里面提醒一下 ksm ?
