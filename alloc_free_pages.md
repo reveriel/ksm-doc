@@ -337,6 +337,10 @@ free_hot_cold_page_list(list, cold)
 
 void __free_pages(struct page *page, unsigned int order)
 {
+    // put_page_testzero 参看后面关于 get 和 put 的部分,
+    // struct page 里面记录的引用计数, 如果dec 1 刚好为0 就返回 true.
+    // free 的同时也把 struct page 的应用计数减少了.
+    // _count == 0 的 struct page 将去哪里呢?
     if (put_page_testzero(page)) {
         if (order == 0)
             free_hot_cold_page(page, false);
@@ -387,15 +391,19 @@ extern void free_hot_cold_page_list(list, cold);
 
 alloc_page 和 free_page 在到处都有使用了.
 
+alloc_page 分配一个物理页面给你, 返回一个 struct page*.
+free_page 释放一个物理页面到 page allocator 去.
+
+
 ## get and put
 
-还有一对 get 和 put.
+还有一对 get 和 put. 这个是对 `struct page` 本身的引用计数.
+不过在启动后还经常有 get put 操作, 让我不是很理解, pageinfo 不应该
+在系统启动时就初始化, 一个物理页面一个, 放在一个数组里就行了么?
 
 
-
-
+`linux/mm.h`:
 ``` c
-static inline void get_page(struct page *page)
 {
     if (unlikely(PageTail(page)))
         if (likely(__get_page_tail(page)))
@@ -406,15 +414,65 @@ static inline void get_page(struct page *page)
     // 引用计数.
     atomic_inc(&page->_count);
 }
+extern bool __get_page_tail(page);
+
+// methods to modify the page usage count.
+// 哪些算是对 page 的使用:
+//  - cache mapping (page->mapping)
+//  - private data (page->private)
+//  - page mapped in a task's page tables, each mapping is counted separately
+// also, incresse the page count before critical routines in case pages gone.
+static inline int put_page_testzero(page) {
+    VM_BUG_ON_PAGE(atomic_read(&page->_count) == 0, page);
+    return atomic_dec_and_test(&page->_count);
+}
+static inline int get_page_unless_zero(page) { return atomic_inc_not_zero(&page->_count); }
+static inline int put_page_unless_one(page) { return atomic_add_unless(&page->_count,-1,1); }
 ```
 
+`linux/mm.h`:
+``` c
+// setup the page count before being freed into the page allocator for
+// the first time(boot or memory hotplug)
+// 说明, pageinfo 刚创建后, set _count = 1, 然后 free 给 page allocator.
+static inline void init_page_count(page) { atomic_set(&page->_count, 1); }
+```
+
+疑问 pageinfo 不应该是每个物理页一人一份, 在 boot 时初始化就行了吗, 为什么要free.
+
+`linux/mm_types.h`
 ``` c
 struct page {
-
+//  ...
+    struct {
+        union {
+            // count of ptes mapped in mms, to show when page is mapped and limit
+            // reverse map searches
+            // used also for tail pages refcounting instead of _count.
+            // Tail pages cannot be mapped and keeping the tail page _count zero at
+            // all times guaranttes
+            atomic_t _mapcount;
+        }
+        atomic_t _count; // usage count
+    }
 }
 ```
 
+`mm/swap.c`:
+``` c
+// 这个 put page
+void put_page(struct page *page) {
+    if (unlikey(PageCompound(page)))
+        put_compound_page(page);
+    else if (put_page_testzero(page)) // page->_count 减一, 如果等于 0 就 true.
+        __put_single_page(page); // page->_count == 0 了!
+}
 
-
+static void __put_single_page(struct page *page)
+{
+    __page_cache_release(page);
+    free_hot_cold_page(page, false); // free hot page
+}
+```
 
 
