@@ -1,4 +1,3 @@
-
 ### BG, PKSM
 
 PKSM (file `mm/pksm.c`) made some changes to the
@@ -126,24 +125,29 @@ QUESTION: KsmPage 会被 swap out 吗?
 
 Time = ListLength / ScanSpeed * N
 
-ScanSpeed = pages_to_scan / sleep_milliseconds
+ScanSpeed = pages_to_scan / sleep_millisecs
 
 其中 ListLength 是 new list 的长度. ScanSpeed 是 ksmd 扫描速度m,
 等于 每次被唤醒时 扫描页面个数 除以 相邻两次唤醒的间隔时间.
 N 是页面在 new list 被扫描几次后才去重.
 
-pages_to_scan, sleep_milliseconds, N 是需要确定的参数.
-可以看做是一个参数, (N * sleep_milliseconds / pages_to_scan)
+pages_to_scan, sleep_millisecs, N 是需要确定的参数.
+可以看做是一个参数, (N * sleep_millisecs / pages_to_scan)
 决定 Time 的大小.
 
 ListLength 是当时 new list 的长度. 在程序启动时可能会突然增加.
-如果 ScanSpeed 与 ListLength 正相关, 可能导致与应用程序竞争 CPU, 
-而且程序启动时刚分配的页面可能立即需要使用. 所有 ScanSpeed 应该与
-ListLength 无关或者负相关.
 
 暂时随便指定. N = 3,
 
+10000 长度的话
+Time = 3 * 100 ms / (100 ) = 3ms
 
+实际测试发现, 如果new list 太长, 会导致手机关机.
+因此, 根据 ListLength 调整 pages_to_scan, 使 Time 为一个常数.
+
+pages_to_scan = N * sleep_millisecs * ListLength / Time
+
+改为指定 Time, 而不是指定 pages_to_scan.
 
 #### Accounting
 
