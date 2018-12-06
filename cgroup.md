@@ -275,13 +275,123 @@ that cpuset:
 - cpusets.memory_migrate flag:
 - etc.
 
+例子, 怎么使用 cpuset.
+
 后面还有些， 不过 cpuset 这个还是很好理解的。
 
 在回头看看 cgroups 的文档， `Documentation/cgroups/cgroups.txt`.
 
-Control Groups provide a mechanism
+Control Groups provide a mechanism for aggregating/partitioning sets of tasks,
+and all their future children, into hierarchical groups with specialized
+behavior.
+
+a *cgroup* associates a set of tasks with a set of parameters for one or more
+subsystems.
+
+a *subsystem* is a module that makes use of the task grouping facilities
+provides by cgroups to treat groups of taks in particular ways. A subsystem is
+typically a "resource controller" that schedules a rescource or applies
+per-cgroup limits, but it may be anything that wants to act on a group of
+processes.
+
+a *hierarchy* is a set of cgroups arranged in a tree, such that every task in
+the system is in exactly one of the cgroups in the hierarcchy, and a set of
+subsystems; each subsystem has system-specific state attached to each cgroup in
+the hierarchy. Each hiearachy has an instance of the cgroup virtual fiflesystem
+associated with it.
+
+At any one time there may be multiple active hierarchies of task crgoups. Each
+hierarchy is a partition of all tasks in the system.
+
+user-level code may create and destroy cgroups by name in an instance of the
+cgroup virtual file system, specify and query to which cgroup a task is
+assigned, and list the task PIDs assigned to a cgroup. Those creations and
+assignments only affect the hierarchy associated with that instance of the
+cgroup file system. e.g. cpusets.
+
+On their own, the only use for cgroups is for simple job tracking. The intention
+is that other subsystems hook into the generic cgroup support to provide new
+attributes for cgroups, such as accounting/limiting the resources which
+processes in a cgroup can access.
+
+- a cgroup associates a set of tasks with a set of parameters for one or more
+  subsystems.
+- 这些子系统主要利用 cgroups 将 task 分为层级式结构.
+
+cgroup的实现:
+
+- each task in the system has a refrence-counted pointer to a css_set.
+- a css_set contains a set of reference-counted pointers to
+  css(cgroup_subsys_state) objest. one fore each cgroup subsystem registered in
+  the system. (for perfromance)
+- a cgroup hierachy filesystem can be mounted for browsing and manipulation fro
+  user space
+- you can list all the tasks (by PID) attached to any cgroup.
+- hook: init/main.c to initilaze the root cgrous and inital css_set.
+- hook: fork and exit. to attach and detach a task from its css_set.
+
+每 个task 的 /proc/pid/cgroup 里面有它所属的 cgroup.
+每个cgroup 通过 cgroup file system 里面的directory来表示. 里面有如下文件:
+
+- tasks: list of tasks attached to that cgroup. Writing a thread ID into this
+  file moves the thread into this cgroup
+- cgroup.procs: list of thread group IDs in the cgroup. Writing as above
+- notify_on_realease flag: run the release agent on exit?
+- release_agent: the path to use fore release notification.
+
+还可能有其他的文件, subsystem 自己加的.
+
+通过 mkdir 来创建新的 cgroups, 移动 tasks 的权限就是 dirctory 的权限(nice!)
+
+实现有限复杂的细节先跳过.
+
+例子:
+
+1. mount -t tmpfs cgroup_root /sys/fs/cgroup
+2. mkdir /sys/fs/cgroup/cpuset
+3. mount -t cgroup -ocpuset cpuset /sys/fs/cgroup/cpuset
+4. Create the new cgroup by doing mkdir's and write's in the /sys/fs/cgroup
+   virtual file system.
+5. Start a task that will be the dounding father of the new job.
+6. Attach that task to the new cgroup by writing its PID to the
+   /sys/fs/cgroup/cpuset/tasks file for that cgroup
+7. fork exec and clone the job tasks from this founding father task.
+
+## blkio
+
+创建一个 subsystem. 需要
+
+- add an entry in linux/cgroup_subsys.h
+- define a cgroup_subsys object caleed (name)_subsys
+
+blkio.
+
+``` text
+BLK_DEV_THROTTLING: 2010 Vivek Goyal, Redhat
+block layer bio throttling support,
+depends on  BLK_CGROUP=y
+
+Block layer bio throttling uspport. It can be used to limit the IO rate to a
+device. IO rate policies are per cgroup and one needs to mount and use blkio
+cgroup controller for creating cgroups and specifying per device IO rate policies.
+see documentation/cgroups/blkio-controller.txt
+```
+
+blk_dev_throttling 依赖于 blockio_cgroup.
+
+`block/blk-cgroup.h`
+
+``` c
+
+```
 
 ## iolimit kernel support
+
+`blkcg->type` 是怎么来的. 20171102.
+
+`CONFIG_CGROUP_IOLIMIT=y`, 增加文件 `cgroup_io_limit.c` `iolimit_cgroup.h`.
+Provides a cgroup implementing for io bandwidth while a process in the cgroup
+read or write. 这是添加了个新的 subsystem 啊..
 
 `blk-cgroup.h`
 
@@ -303,6 +413,8 @@ struct blkcg {
 }
 ```
 
+原本这个 `type` 是 `fg_flag`, 应该只能表示进程是否为 foreground, 后来细化了.
+
 `blk-throttle.c` : Interface for controlling IO bandwidth on a request queue.
 
 ``` c
@@ -313,6 +425,9 @@ static int tg_set_cgroup_type(struct cgroup_subsys_state *css,
     blkcg->type = type;
 }
 ```
+
+这看到这里对 `blkcg->type` 赋值, 所以. 这个 type 只有是 android framework
+写的了.
 
 ``` c
 static struct cftype throtl_files[] = {
@@ -325,53 +440,41 @@ static struct cftype throtl_files[] = {
 }
 ```
 
-CGROUP_IOLIMIT: IO bandwidth limit cgroup subsystem:
-Provides a cgroup implementing for io bandwidth while a process in the cgroup
-read or write
+猜测的话, 可能是
+[RunningAppProcessInfo](https://developer.android.com/reference/android/app/ActivityManager.RunningAppProcessInfo)
 
-`include/linux/iolimit_cgroup.h`
+这是个枚举值, 可以取值:
 
-``` c
-#include <linux/cgroup.h>
-// ...
+- foreground
+- visible. visible but not immediate foreground
+- service
+- perceptible.
+- top sleep. is running the foreground UI, but the devie is asleep so not
+  visible.
+- can't save state, runing an app that can not save its state, thus can't be
+  killed while in the background
+- cached
+- gone. This process does not exist.
 
-struct iolimit_cgroup {
-    struct cgroup_subsys_state css;
-    atomic64_t          switching;
+[Processs and App lifcycle](https://developer.android.com/guide/components/activities/process-lifecycle)
+介绍了四种. Android 把进程按重要等级分为4种:
 
-    atomic64_t          write_limit;
-    s64                 write_part_nbyte;
-    s64                 write_already_used;
-    struct timer_list   write_timer;
-    spinlock_t          write_lock;
-    wait_queue_head_t   write_wait;
+1. foreground process. A process is considered to be foreground if
+    - runinng an Activity at the top of the screen that the user is interacting
+      with (its onResume() has been called).
+    - It has a BroadcastReceiver that is currently runing,(onReceiver() running)
+    - It has a Service that is currently executing code in one of its callbacks.
+2. visible process. doing work that the user is currently aware of. A process is
+   considered visible if:
+   - It is rning an Activity that is visible to the user on-screen but not in
+     the foreground(onPause() has been called). 比如弹窗, 窗户下面的那个没有
+     focus的.
+   - It has a Service that is running as a foreground service.
+   - It is hosting a service that the system is using for a particular feature
+     that the user is aware.
+3. service proces.
+   - holding a Service that has been started with startService(). 比如后台网络上
+     传下载.
+4. cached process. 不用的. 不可见的. 放在一个伪LRU list 中.
 
-    atomic64_t          read_limit;
-    s64                 read_part_nbyte;
-    s64                 read_already_used;
-    struct timer_list   read_timer;
-    spinlock_t          read_lock;
-    wait_queue_head_t   read_wait;
-}
-
-// 先补习一下 cgroup .
-static inline struct iolimit_cgroup *css_iolimit(struct cgroup_subsys_state *css)
-
-    return css ? container_of(css, struct iolimit_cgroup, css) : NULL;
-}
-static inline struct iolimit_cgroup *task_iolimitcg(struct task_strct *tsk)
-{
-    return css_iolimit(task_css(tsk, iolimit_cgrp_id));
-}
-
-
-```
-
-`kernel/cgroup_io_limit.c` :
-
-``` c
-static int is_need_iolimit(struct iolimit_cgroup *iolimitcg)
-{
-
-}
-```
+两处process 状态分类也没有完全相对应.
