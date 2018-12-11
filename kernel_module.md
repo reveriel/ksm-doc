@@ -18,4 +18,16 @@ static inline pid_t task_pid_nr(tsk) { return tsk->pid; }
 
 
 
+[usfca, CS 635: Advanced Systems Programming (Spring 2005)](https://www.cs.usfca.edu/~cruse/cs635s05/)
+这个不错, 一开始就从 kernel module 入手. 不过版本有点老.
+[2007](https://www.cs.usfca.edu/~cruse/cs635f07/) 这个算是最新的了, 老教授不开这个课了.
+
+麻蛋各种教程都过时了!!
+
+
+
+
+
+
+
 
