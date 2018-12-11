@@ -28,3 +28,7 @@ inode ,即不同的文件, 内容的一个页面帧。  文件系统代码获取
  是可以直接被 文件系统页面写的, 例如 DMA 请求就是直接作用在 page frames 上的,
 这导致拦截 对文件页的写, 以实现 COW 变得很困难. 除非有一个 可编程的 IO MMU
 能够 trap 写操作.
+
+## dump process mem on linux
+
+通过 /proc/pid/mem. 使用读写文件的方式读写进程的内存.

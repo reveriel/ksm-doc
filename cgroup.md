@@ -426,8 +426,8 @@ static int tg_set_cgroup_type(struct cgroup_subsys_state *css,
 }
 ```
 
-这看到这里对 `blkcg->type` 赋值, 所以. 这个 type 只有是 android framework
-写的了.
+只看到这里有对 `blkcg->type` 赋值, 所以. 这个 type 只有是 android framework
+写的了. Android framework 通过 cgroup 虚拟文件系统把相关信息写到内核中.
 
 ``` c
 static struct cftype throtl_files[] = {
