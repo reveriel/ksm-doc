@@ -41,5 +41,7 @@ int add_to_swap(struct page *page, struct list_head *list)
 
 ```
 
-~
-~
+涉及到 PG_swapcache: if this bit is set, it means : swp_entry_t in page->private.
+
+
+

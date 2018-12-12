@@ -1,5 +1,9 @@
 # pksm
 
+
+Q: cow 发生后是怎么样?
+
+
 ## page 合并.
 
 ``` c
@@ -35,66 +39,167 @@ try_to_merge_zero_page(page)
         goto out;
 }
 ```
+split the compound page.. split_huge_page 求 CONFIG_TRANSPARENT_HUGEPAGE.
+手机上没有开.
 
-compound page, 这里?
+`pksm_rmap_walk(page, pksm_merge_zero_page, zero_page)`
+
+`pskm_rmap_walk(page, int(*rmap_one)(page,vma,addr,arg), arg)`
+
+这里有 rmap walk了, 在 ksm 里面, 没有这样, ksm 里面
+将 (vma,page) 和 kpage 合并, (vma,page) 相当于一个映射到 page 的虚拟页面. 
+合并时只把这一个 pte 修改, pksm 里面, rmap walk 估计就是要把所有
+映射到这个 page 的 pte 修改掉了.
+
+> 感觉我知道哪里有问题了, rmap.c 里面 的 rmap_walk 调用的函数是错的.
+> TODO: check
+
+然后 in `pksm_merge_zero_page(page, vma, addr, kpage)`
 
 ``` c
-static int page_trans_compound_anon_split(page)
+if ((err = write_protect_page(vma, page &orig_pte)) == 0) {
+     if (is_page_full_zero(page))
+         err = replace_page(vma, page, kpage, orig_pte);
+}
+```
+这里先 write protect page 再检测 is full zero.  也对, 不然可能被改了?
+并不会, 在 `try_to_merge_zero_page()` 时就已经 lock page 了.
+
+把这个 pte 设为不可写.
+
+``` c
+static int write_protect_page(vma, page, orig_pte) {
+if (pte_write(*ptep) || pte_dirty(*ptep))
+   // 如果可写, 或者 dirty?
+   // 如果 pte dirty, set page dirty
+   // 关于 swap cache 不太懂.
+   // clear Dirty flag, and clears write flag
+   entry = pte_mk_clean(pte_wrprotect(entry));
+   set_pte_at_notify(mm, addr, ptep, entry);
+}
+```
+
+``` c
+// replace page in vma by new ksm page..
+static int replace_page(vma, page, kpage, orig_pte) {
+    ptep = pte_offset_map_lock(mm, pmd, addr, &ptl);
+    // 这个是 pmd 所在 page 的 spinlock. 可能是因为要修改
+    // 之前在写保护时, page_check_address 也会锁 pte(锁的是pmd 的page)
+    if (!pte_same(*ptep, orig_pte)) {
+        // 这个判断, 这个 page  的pte 和之前的是否一样
+        // write_protect_page 时, orig_pte 设置成了 写保护的flag.
+        // 如果这时发现不同了, 说明在 两个函数调用之间发生了什么吧.
+        // 还是不太明白 orig_pte 干什么用的..
+        pte_unmap_unlock(ptep, ptl);
+        // pte_unmap_unlock do two things.
+        // spin_unlock(ptl)
+        // pte_unmap(pte) 
+        //    x86-64 上 pte_unmap 啥也不干. it always has all page tables mapped.
+        //    x86-32 上 kunmap_atomic(pte) .. 
+        // 就 unmap 了 ?
+    }
+    // ...
+    // 用 vma 的权限创建一个新 pte.
+    entry = mk_pte(kpage, vma->vm_page_prot);
+    if (is zero page) {
+        entry = pte_mkspecial(entry); // special flag, programmer def 的标记.
+        zero_sharing++
+            __inc_zone_page_state()
+            dec_mm_counter(mm, MM_ANONPGAGE)
+            // 三个都是统计用的.
+    } else {
+        get_page(kpage);    // 引用计数 +1
+        page_add_anon_rmap(kpage, vma, addr) // 新的 pte 指向了这个 page. 反向映射.
+    }
+    set_pte_at_notify(mm, addr, ptep, entry); //  写上新的 entry
+    page_remove_rmap(page); // 删掉 rmap
+    // 这个 remove_rmap 也是有更新统计的吧.. 感觉这里也有问题.
+    // TODO
+    // remove_rmap 在 page 还有共享的情况下只是减少一个 _mapcount
+    // 如果只有最后一个的话.
+    //   也只是更新一下 zone 数据
+    // 注释里写着 it would be tidy to reset the pageanon mapping here, but.. 呵呵
+    if (!page_mapped(page))
+        try_to_free_swap(page) // free 掉 swap cache. set page dirty 蛤???
+    page_cache_release(page); // 就是 put_page.(宏) 不知道为什么用这个. 应该只是版本问题.
+    pte_unmap_unlock(ptep, ptl);
+}
+```
+
+咦 居然 pksm 和 ksm 不一样 ?
+pksm 只是多了对 zero page 的处理.
+
+Q: 如果被合并的 page 有多个映射到它的pte, 会怎么样?
+
+A: rmap_walk 会遍历所有的映射到它的 vma, 每执行一次 replace_page 就删掉一个引用,
+最后一次就能释放掉这个 page 了.
+
+`cmp_and_merge_zero_page(page)` 之后:
+
+``` c
+kpage = stable_tree_search(page)
+if (kpage) {
+    err = try_to_merge_with_pksm_page(rmap_item, page, kpage);
+    if (!err) {
+        lock_page(kpage);
+        // 下面这个是 ksm 的, 和 pksm 有点不一样.
+        // 因为两者的 stable node 不一样.
+        // stable_tree_append(rmap, page_stable_node(kpage))
+        stable_tree_append(page_stable_rmap_item(kpage), page);
+        //                      kpage->pksm( 就是 rmap )
+        ...
+    }
+}
+```
+
+``` c
+struct stable_node_anon {
+    struct hlist_node hlist;
+    struct anon_vma *anon_vma;
+};
+static void stable_tree_append(struct rmap_item *rmap_head, struct page *page)
 {
-    struct page *transhuge_head = page_trans_compound_anon(page);
+    // rmap_head 是 kpage 的 rmap_item.
+    rmap = page->pksm
+    struct stable_node_anon *anon_node = alloc_stable_anon();
+    if (PageKsm(page)) {
+        // page 已经是 ksm page 了?
+        //  TODO, 不可能吧.
+        anon_node->anon_vma = rmap->anon_vma;
+    } else
+        anon_node->anon_vma = page_rmapping(page);
+
+    get_anon_vma(anon_node->anon_vma) // 引用计数加一
+    hlist_add_head(&anon_node->hlist, &rmap_head->hlist);
+    if (!anon_node->hlist.next)
+        ksm_pages_shared++;
+        // 嗯, 合情合理
+}
+```
+
+Q: 第一个 ksm page 是怎么产生的?
+
+A: 等等再问, 反正不是这里. 后面有把正常 page变成 ksm page的.
+
+继续
+``` c
+kpage = stable_tree_search(page)
+if (kpage) {
+    err = try_to_merge_with_pksm_page(rmap_item, page, kpage);
+    if (!err) {
+        lock_page(kpage);
+        stable_tree_append(page_stable_rmap_item(kpage), page);
+        //                      kpage->pksm( 就是 rmap )
+        unlock_page(kpage);
+    }
+    put_page(kpage); // stable_tree_search 里面 get 过.
+    return error;
 }
 
-static struct page *page_trans_compound_anon(page)
-    if (PageTransCompound(page))
-        struct page *head = compound_head(page);
-	if (PageAnon(head))
-	    return head;
+// 没在 stable tree 中找到.
+tree_rmap_item = unstable_tree_search_insert(rmap_item, page, &tree_page);
+
 ```
-
-见 `mm/page_alloc.c`
-
->  higher-order pages are called "compound pages". They are structure thusly:
->    the first PAGE_SIZE page is called the head page
->    the remaining PAGE_SIZE pages are called tail pages
->    All pages have PG_compound set. All tail pages have their ->first_page
->  poting at the head.
->    the first tail page's ->lru.next holds the address of the compound page's
->  put_page() function. Its ->lru.prev holds the order of allocation.
->  This usage means that zero-order pages may not be compound.
-
-`mm.h`
-> compound pages have a destructor function.
-
-ref : [An introduction to compound pages](https://lwn.net/Articles/619514/)
-
-A compound page is simply a grouping of two or more physically contiguous pages into a
-unit that can, in many ways, be treated as a single, larger page. 
-- used to create huge pages, in hugetlbfs, transparent huge pages..
-- serve as anonymous memory, or used as buffer in kernel.
-- cannot be in page cache.
-
-
-``` c
-pages = alloc_pages(GPF_KERNEL, 2)
-```
-这个如果给了我 4 个页, 怎么用 一个 struct page 表示?
-this will return four physically contiguous pages, but they will not be a compound page. 
-
-alloc a compound page:
-
-得到这个页面, 怎么用? 如果是内核的?
-
-又搞不清 lowmem 之类的了. 
-
-??????
-
-
-
-
-
-
-
-
 
 
 ## unstable tree 扫描.
