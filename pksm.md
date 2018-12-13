@@ -57,7 +57,7 @@ split the compound page.. split_huge_page 求 CONFIG_TRANSPARENT_HUGEPAGE.
 然后 in `pksm_merge_zero_page(page, vma, addr, kpage)`
 
 ``` c
-if ((err = write_protect_page(vma, page &orig_pte)) == 0) {
+if ((err = write_protect_page(vma, page, &orig_pte)) == 0) {
      if (is_page_full_zero(page))
          err = replace_page(vma, page, kpage, orig_pte);
 }
@@ -101,7 +101,7 @@ static int replace_page(vma, page, kpage, orig_pte) {
     // ...
     // 用 vma 的权限创建一个新 pte.
     entry = mk_pte(kpage, vma->vm_page_prot);
-    if (is zero page) {
+    if (is zero page, check pfn) {
         entry = pte_mkspecial(entry); // special flag, programmer def 的标记.
         zero_sharing++
             __inc_zone_page_state()
@@ -157,10 +157,15 @@ struct stable_node_anon {
     struct hlist_node hlist;
     struct anon_vma *anon_vma;
 };
+
+ksm page 的 rmap_item->hlist. 作为链表头, 后面跟着一串 stable_node_anon.
+这个 rmap_item->hlist 有点浪费,  rmap_item->page 是 ksm page时才会用到.
+
+
 static void stable_tree_append(struct rmap_item *rmap_head, struct page *page)
 {
     // rmap_head 是 kpage 的 rmap_item.
-    rmap = page->pksm
+    rmap = page->pksm;
     struct stable_node_anon *anon_node = alloc_stable_anon();
     if (PageKsm(page)) {
         // page 已经是 ksm page 了?
@@ -182,6 +187,7 @@ Q: 第一个 ksm page 是怎么产生的?
 A: 等等再问, 反正不是这里. 后面有把正常 page变成 ksm page的.
 
 继续
+
 ``` c
 kpage = stable_tree_search(page)
 if (kpage) {
@@ -192,20 +198,147 @@ if (kpage) {
         //                      kpage->pksm( 就是 rmap )
         unlock_page(kpage);
     }
-    put_page(kpage); // stable_tree_search 里面 get 过.
+    put_page(kpage); // stable_tree_search 里面 get(get_ksm_page) 过.
     return error;
 }
 
 // 没在 stable tree 中找到.
 tree_rmap_item = unstable_tree_search_insert(rmap_item, page, &tree_page);
+// 这个函数, 在 unstable tree 里面找相等页, 如果没找到就插入.
+// 找到则返回. 那个相应的 rmap.  get_mergeable_page 引用计数加一
+// &tree_page 保存找到的那个在 unstable tree 里的 page.
+// 如果 map_item 不在 unstable tree 中. 则插入 unstable tree
+if (tree_rmap_item) {
+    // 把两个页merge成一个页
+    err = try_to_merge_two_pages(rmap_item, page, tree_rmap_item, tree_page);
+    // page 变成 ksm page, 所有原来指向 tree_page 的 pte 指向 page.
+    if (!err) {
+	kpage = page;
+	remove_rmap_item_from_tree(tree_rmap_item, 0);
+	lock_page(kpage)
+	err = stable_tree_insert(rmap_item, kpage);
+	// 把kpage的rmap_item, 插入 stable tree.
+	// kpage->mapping = rmap_item + flags.
+	// rmap_item->address |= STABLE_FLAG
+	if (!err) {
+	    stable_tree_append(rmap_item, kpage);
+	    // 给 kpage 分配一个 anon_node, 插到 rmap_item->hlist
+	    lock_page(tree_page);
+	    stable_tree_append(rmap_item, tree_page);
+	    // 给 tree_page 分配一个 anon_node, 插到 rmap_item->hlist
+	    unlock_page(tree_page);
+	    err = 0;
+	} else {
+	    // insert to stable tree failed.
+	    // TODO, 我觉得应该得有 else 吧.
+	    /* try_to_merge_two_pages can return
+	    * PKSM_FAULT_SUCCESS
+	    * PKSM_FAULT_DROP
+	    * PKSM_FAULT_TRY
+	    * not properly handled by its caller
+	    */
 
+	}
+	unlock(kpage)
+    } else {
+	// merge failed.
+	// TODO error handling
+    }
+    put_page(tree_page); // ksm 比 pksm put_page(tree_page) 早.
+}
 ```
 
+再回头看一下 rmap 有什么问题. `rmap.c` 的 `rmap_walk()` 对
+ksm page 调用 `rmap_walk_ksm(page, rwc)`;
+
+``` c
+// rmap_walk 的任务就是遍历所有相关的 vma
+int rmap_walk_ksm(page, rwc) {
+    // 看起来没什么问题.
+    // search_new_forks 不太理解
+}
+```
+
+
+``` c
+static int try_to_merge_two_pages(rmap_item, page, tree_rmap_item, tree_page) {
+    try_to_merge_with_pksm_page(rmap_item, page, NULL);
+    // 第一次，NULL 表示把这个 page 设置为 ksm page.
+    // 把所有指向这个 page 的 pte 写保护.
+    try_to_merge_with_pksm_page(tree_rmap_item, tree_page, page);
+    // 把所有指向 tree_page 的 pte 写保护.
+    // 并指向上面的 page.
+}
+
+static int try_to_merge_with_pksm_page(rmap_item, page, kpage) {
+    return try_to_merge_one_anon_page(page, kpage);
+}
+
+static int try_to_merge_one_anon_page(page, kpage); {
+    if (page == kpage) return 0; // 不会合并同一页.
+    if (!trylock_page(page)) return PKSM_FAULT_TRY;
+    pksm_rmap_walk(page, pksm_wrprotect_pte, kpage);
+    // 这里和 ksm 区别,  ksm 的一个 rmap_item 表示的一个虚拟页面,
+    // 在合并是, 那一个虚拟地址的 pte 写保护
+    // pksm 一个 rmap_item 表示一个物理页, 需要把所有映射到这个物理页的 pte 写保护.
+    // 不理解的是, ksm 说 if it's mapped elsewhere, all of its ptes are 
+    // necessarily already write-protected? : ???
+    unlock_page(page);
+}
+
+static int pksm_wrprotect_pte(page, vma, addr, kpage) {
+    if ((err = write_protect_page(vma, page, &orig_pte)) = 0) {
+	if (!kpage) {
+	    set_page_stable_ksm(page, NULL); // 嗯? setPageKsm 在哪? 哦, 
+	    // ksm 不是 page flags 里面的一个bit.
+	    // 是根据 page->mapping 来判断的.
+	    mark_page_accessed(page); // ???
+	} else if (pages_identical(page, kpage)) {
+	    replace_page(vma, page, kpage, orig_pte)
+	}
+    }
+    if ((vma->vm_flags & VM_LOCKED) && kpage && !err) {
+	// VM_LOCKED, 是 mlock() 设置的. 大概, see mm/mlock.c
+	// 把 page munlock, 把 kpage mlock.
+	munlock_vma_page(page);
+	if (!PageMlocked(page)) {
+	    unlock_page(page);
+	    lock_page(kpage);
+	    mlock_vma_page(kpage); 
+	    page = kpage; /// ??? 这波操作是干什么?
+	}
+    }
+}
+```
+
+接下来看 pksm page 的 rmap_item 是怎么释放掉的.
+
+通过 `pksm_del_anon_page(page)`, 在 `mm/page_alloc.c`,
+见 [alloc_free_pages](alloc_free_pages.md).
+这个函数标记 `rmap_item->address |= DELLIST_FLAG`. 加入 del_list.
+pksmd 在运行中看到 DELLIST_FLAG, 然后释放.
+del_list 感觉没什么必要, 可以删掉, 节省内存.
+
+pksmd 在 `stable_tree_search()` 中, 检测 stable tree node 的 flag.
+在 `stable_tree_insert()` 中, 检测 stable tree node 的 flag.
+在 `unstable_tree_search_insert()` 中, 检测 unstable tree node 的flag.
+在 `ksm_do_scan()` 中, (有个检测没有必要) 检测 new_list 中的 flag, 并
+释放掉 del_list 中的所有 rmap_item.
+
+不管怎样, 最后都是通过 `remove_rmap_item_from_tree(rmap_item)` 来释放
+内存.
+
+
+ 
 
 ## unstable tree 扫描.
 
 `ksm_do_scan()` 最后会扫描 unstable tree 的节点. 重新计算 checksum, 把checksum
 发生变化的页面删除.
+
+扫描每次都从 unstabletree_checksum_list 的表头开始, 是个问题.
+TODO: 删掉 update_list, 在 unstable tree 中搜索时同步进行.
+
 
 ``` c
 static void pksm_upsate_unstable_page_checksum()
