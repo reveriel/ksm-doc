@@ -4,6 +4,7 @@
 Q: cow 发生后是怎么样?
 
 
+
 ## page 合并.
 
 ``` c
@@ -157,11 +158,13 @@ struct stable_node_anon {
     struct hlist_node hlist;
     struct anon_vma *anon_vma;
 };
+```
+
 
 ksm page 的 rmap_item->hlist. 作为链表头, 后面跟着一串 stable_node_anon.
 这个 rmap_item->hlist 有点浪费,  rmap_item->page 是 ksm page时才会用到.
 
-
+``` c
 static void stable_tree_append(struct rmap_item *rmap_head, struct page *page)
 {
     // rmap_head 是 kpage 的 rmap_item.
@@ -169,7 +172,7 @@ static void stable_tree_append(struct rmap_item *rmap_head, struct page *page)
     struct stable_node_anon *anon_node = alloc_stable_anon();
     if (PageKsm(page)) {
         // page 已经是 ksm page 了?
-        //  TODO, 不可能吧.
+        //  TODO, 不可能吧.  见后面
         anon_node->anon_vma = rmap->anon_vma;
     } else
         anon_node->anon_vma = page_rmapping(page);
@@ -387,3 +390,63 @@ unshared_pages by one period.
 
 10秒钟扫描完所有 unstable tree nodes N(数量为 ksm_pages_unshared).
 10 * 1000 = N / (need_scan / sleep_ms)
+
+
+
+
+## stable_tree_append
+
+
+`stable_tree_append` 在 插入 ksm page时 一处调用. 
+在将两个 unstable tree node 合并时, 两处调用.
+
+为 page 分配 stable_node_anon, 
+
+
+``` c
+static void stable_tree_append(struct rmap_item *rmap_head, struct page *page)
+{
+    // rmap_head 是 kpage 的 rmap_item.
+    rmap = page->pksm;
+    struct stable_node_anon *anon_node = alloc_stable_anon();
+    if (PageKsm(page)) {
+        // page 已经是 ksm page 了?
+	// 当 kpage 刚变成 ksm page 时, 接下来要将两个 page 的 anon_vma 挂在这个 kpage 下.
+	// 所有 把 kpage 的 anon_vma 挂在自己的 hlist 下时 就会有这种情况.
+	// 可以改掉吗? 在merge 时, 把 kapge->mapping 清空了的.
+	// 如果改一下..
+	// stable node 里面 的 page 的 mapping 是指向 rmap_item 的.
+        anon_node->anon_vma = rmap->anon_vma;
+    } else
+        anon_node->anon_vma = page_rmapping(page);
+
+    get_anon_vma(anon_node->anon_vma) // 引用计数加一
+    hlist_add_head(&anon_node->hlist, &rmap_head->hlist);
+    if (!anon_node->hlist.next)
+        ksm_pages_shared++;
+        // 嗯, 合情合理
+}
+```
+
+anon_vma 是有 锁的.
+有通过这 `page_lock_anon_vma_read(page)` 获取的.
+
+详细: [anon_vma.md](anon_vma.md)
+
+
+
+## ramp_item
+
+page can be in 
+- pksm
+  - ->pksm = rmap_item
+- stable tree
+    - ->mapping = rmap_item / NULL
+- unstable tree
+    - ->mapping = anon_vma
+
+rmap_item can be in 
+- pksm
+- stable tree
+- unstable tree
+
