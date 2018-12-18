@@ -30,6 +30,12 @@ imap.gmail.com
 端口：993
 ```
 
+而且, 我电脑上只有 http proxy, 需要用 proxychains 转一下才能代理 smtp.
+proxychains 让所有 tcp 链接都通过 proxy 发生. (有时候有些问题. 有时候不需要.)
+
+```
+sudo apt install proxychains
+```
 
 
 
